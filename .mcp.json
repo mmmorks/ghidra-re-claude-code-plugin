@@ -1,0 +1,10 @@
+{
+  "ghidra": {
+    "command": "uv",
+    "args": [
+      "run",
+      "/Users/john/Code/GhidraMCP/bridge_mcp_ghidra.py",
+      "http://127.0.0.1:8987"
+    ]
+  }
+}
