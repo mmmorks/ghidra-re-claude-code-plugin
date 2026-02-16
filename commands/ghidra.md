@@ -8,7 +8,7 @@ The user's request: $ARGUMENTS
 
 ## How to interact with Ghidra
 
-Use the GhidraMCP MCP tools directly — they are available as `mcp__ghidra__*` tool calls (e.g. `mcp__ghidra__decompile_function`, `mcp__ghidra__list_methods`). Each MCP tool maps 1:1 to a tool documented in the ghidra skill.
+Use the GhidraMCP MCP tools directly — they are available as `mcp__ghidra__*` tool calls (e.g. `mcp__ghidra__get_function_code`, `mcp__ghidra__list_functions`). Each MCP tool maps 1:1 to a tool documented in the ghidra skill.
 
 ## Key principles
 
