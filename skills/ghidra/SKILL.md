@@ -31,14 +31,20 @@ mcp__ghidra__get_function_code(function_identifier="FUN_08001234")
 mcp__ghidra__get_function_code(function_identifier="08001234", mode="assembly")
 mcp__ghidra__rename_function(function_identifier="FUN_08001234", new_name="uart_init")
 mcp__ghidra__list_functions(offset=0, limit=20)
-mcp__ghidra__get_call_hierarchy(function_name="FUN_08001234", depth=2)
+mcp__ghidra__get_call_graph(function_identifier="FUN_08001234", depth=2)
 ```
 
-## MCP Tool Reference — 44 Tools
+## MCP Tool Reference — 40 Tools
 
-All tools return plain text (one item per line). List tools support `offset` and `limit` parameters for pagination (defaults: offset=0, limit=100). Tool names map 1:1 to the names below with the `mcp__ghidra__` prefix.
+All tools return structured JSON responses. List tools support `offset` and `limit` parameters for pagination (defaults: offset=0, limit=100). Tool names map 1:1 to the names below with the `mcp__ghidra__` prefix.
 
-### Functions (9 tools)
+### Program (1 tool)
+
+| Tool | Parameters | Description |
+|------|------------|-------------|
+| `get_program_info` | _(none)_ | Get binary metadata: architecture, endianness, format, base address, entry point, function/symbol counts. Call first when starting analysis. |
+
+### Functions (8 tools)
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
@@ -49,8 +55,7 @@ All tools return plain text (one item per line). List tools support `offset` and
 | `get_current_address` | _(none)_ | Get address at Ghidra cursor |
 | `get_current_function` | _(none)_ | Get function at Ghidra cursor |
 | `search_functions_by_name` | `query`, `offset`, `limit` | Search functions by name substring (case-insensitive) |
-| `set_function_prototype` | `function_address`, `prototype` | Set function signature (e.g., `int foo(char *buf, int len)`) |
-| `get_function_callers` | `function_name` | List all callers of a function |
+| `set_function_prototype` | `function_identifier`, `prototype` | Set function signature (e.g., `int foo(char *buf, int len)`). Accepts name or address. |
 
 ### Symbols (2 tools)
 
@@ -80,31 +85,27 @@ All tools return plain text (one item per line). List tools support `offset` and
 | `get_memory_layout` | `offset`, `limit` | List memory segments (name, address range) |
 | `list_data_items` | `offset`, `limit` | List defined data labels and values |
 | `rename_data` | `address`, `new_name` | Rename/label data at address |
-| `set_address_data_type` | `address`, `data_type`, `clear_existing` (opt, default true) | Set data type at address (built-in, struct, enum, or array like "char[32]") |
+| `set_address_data_type` | `address`, `data_type`, `clear_existing` (opt, default false) | Set data type at address (built-in, struct, enum, or array like "char[32]") |
 | `read_memory` | `address`, `size` (opt, 1-1024, default 16), `format` (opt: hex/decimal/binary/ascii) | Read raw memory bytes |
 | `get_memory_permissions` | `address` | Get R/W/X permissions for address |
-| `get_memory_data_type` | `address` | Get data type defined at address |
+| `get_address_data_type` | `address` | Get data type defined at address |
 
-### Analysis & Cross-References (6 tools)
+### Analysis & Cross-References (5 tools)
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
 | `list_references` | `address`, `offset`, `limit` | List xrefs TO an address |
 | `list_references_from` | `address`, `offset`, `limit` | List xrefs FROM an address |
-| `analyze_control_flow` | `address` | Get control flow graph for function |
-| `analyze_data_flow` | `address`, `variable` | Track variable definitions/uses |
-| `analyze_call_graph` | `address`, `depth` (opt, default 2, max 5) | Get call graph from function |
-| `get_call_hierarchy` | `function_name`, `depth` (opt, default 2) | Get callers and callees tree |
+| `analyze_control_flow` | `function_identifier` | Get control flow graph for function. Accepts name or address. |
+| `analyze_data_flow` | `function_identifier`, `variable` | Track variable definitions/uses in a function. Accepts name or address. |
+| `get_call_graph` | `function_identifier`, `depth` (opt, default 2, max 5), `direction` (opt: "callers", "callees", "both"; default "both") | Get call graph — callers, callees, or both. Accepts name or address. |
 
-### Comments (5 tools)
+### Comments (2 tools)
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
-| `set_decompiler_comment` | `address`, `comment` | Set pre-comment in decompiler view |
-| `set_disassembly_comment` | `address`, `comment` | Set EOL comment in disassembly view |
-| `get_comments` | `address` | Get all comment types at address |
-| `get_decompiler_comment` | `address` | Get decompiler comment at address |
-| `get_disassembly_comment` | `address` | Get disassembly comment at address |
+| `set_comment` | `address`, `comment`, `type` ("pre"/"decompiler", "eol"/"disassembly", "post", "plate", "repeatable") | Set a comment at an address with the specified type |
+| `get_comment` | `address` | Get all comment types at address |
 
 ### Search (3 tools)
 
@@ -118,14 +119,15 @@ All tools return plain text (one item per line). List tools support `offset` and
 
 | Tool | Parameters | Description |
 |------|------------|-------------|
-| `rename_variables` | `function_name`, `renames` ({old: new}) | Batch rename local variables — all-or-nothing transaction, single decompile pass |
-| `split_variable` | `function_name`, `variable_name`, `usage_address`, `new_name` (opt) | Split/rename variable at specific usage site |
-| `set_variable_types` | `function_address`, `types` ({var_name: type}) | Batch set variable data types — all-or-nothing transaction |
+| `rename_variables` | `function_identifier`, `renames` ({old: new}) | Batch rename local variables — all-or-nothing transaction, single decompile pass. Accepts name or address. |
+| `split_variable` | `function_identifier`, `variable_name`, `usage_address`, `new_name` (opt) | Split/rename variable at specific usage site. Accepts name or address. |
+| `set_variable_types` | `function_identifier`, `types` ({var_name: type}) | Batch set variable data types — all-or-nothing transaction. Accepts name or address. |
 
 ## Example MCP Tool Calls
 
 ```
 # === RECON ===
+mcp__ghidra__get_program_info()
 mcp__ghidra__get_memory_layout()
 mcp__ghidra__list_functions(offset=0, limit=20)
 mcp__ghidra__list_symbols(limit=50)
@@ -142,17 +144,17 @@ mcp__ghidra__get_function_code(function_identifier="FUN_08001234", mode="pcode")
 
 # === ANALYSIS ===
 mcp__ghidra__list_references(address="08001234")
-mcp__ghidra__analyze_call_graph(address="08001234", depth=3)
-mcp__ghidra__get_function_callers(function_name="main")
+mcp__ghidra__get_call_graph(function_identifier="08001234", depth=3)
+mcp__ghidra__get_call_graph(function_identifier="main", direction="callers")
 mcp__ghidra__read_memory(address="08000000", size=64, format="hex")
 mcp__ghidra__get_memory_permissions(address="08000000")
 
 # === ANNOTATE ===
 mcp__ghidra__rename_function(function_identifier="FUN_08001234", new_name="uart_init")
 mcp__ghidra__rename_data(address="40004400", new_name="USART1_BASE")
-mcp__ghidra__rename_variables(function_name="uart_init", renames={"local_10": "baud_divisor", "local_14": "clock_freq"})
-mcp__ghidra__set_function_prototype(function_address="08001234", prototype="void uart_init(uint32_t baud_rate)")
-mcp__ghidra__set_variable_types(function_address="08001234", types={"local_10": "uint32_t", "local_14": "uint32_t"})
+mcp__ghidra__rename_variables(function_identifier="uart_init", renames={"local_10": "baud_divisor", "local_14": "clock_freq"})
+mcp__ghidra__set_function_prototype(function_identifier="08001234", prototype="void uart_init(uint32_t baud_rate)")
+mcp__ghidra__set_variable_types(function_identifier="08001234", types={"local_10": "uint32_t", "local_14": "uint32_t"})
 mcp__ghidra__set_address_data_type(address="20000100", data_type="USART_TypeDef", clear_existing=true)
 
 # === STRUCTURES & ENUMS ===
@@ -173,7 +175,7 @@ mcp__ghidra__create_enum(name="USART_SR_Flags", size=4, category_path="/Peripher
 # Bulk update existing enum
 mcp__ghidra__update_enum(name="USART_SR_Flags", value_renames={"OLD_FLAG": "USART_SR_PE"}, value_changes={"USART_SR_PE": 1})
 
-mcp__ghidra__set_decompiler_comment(address="08001234", comment="UART baud rate configuration")
+mcp__ghidra__set_comment(address="08001234", comment="UART baud rate configuration", type="decompiler")
 
 # === FIND DATA TYPE USAGE ===
 mcp__ghidra__find_data_type_usage(type_name="USART_TypeDef")
@@ -188,11 +190,12 @@ When the user invokes `/ghidra` with arguments, interpret their intent and call 
 
 When starting a new analysis or when asked for an overview:
 
-1. **Memory map** — `get_memory_layout` to understand the binary layout (flash, RAM, peripheral regions)
-2. **Function inventory** — `list_functions(limit=20)` to sample function names and gauge analysis state
-3. **Symbols** — `list_symbols(limit=50)` for entry points, imports, exports, and labels
-4. **Strings/data** — `list_data_items(limit=50)` to find version strings, config constants, magic values
-5. **Existing types** — `list_data_types(kind="struct")` and `list_data_types(kind="enum")` to see what types exist
+1. **Program info** — `get_program_info` to learn architecture, endianness, format, and entry point
+2. **Memory map** — `get_memory_layout` to understand the binary layout (flash, RAM, peripheral regions)
+3. **Function inventory** — `list_functions(limit=20)` to sample function names and gauge analysis state
+4. **Symbols** — `list_symbols(limit=50)` for entry points, imports, exports, and labels
+5. **Strings/data** — `list_data_items(limit=50)` to find version strings, config constants, magic values
+6. **Existing types** — `list_data_types(kind="struct")` and `list_data_types(kind="enum")` to see what types exist
 
 ### Iterative Analysis
 
@@ -201,7 +204,7 @@ After recon, systematically work through the binary:
 1. **Search** for relevant functions: `search_functions_by_name(query="KEYWORD")`
 2. **Decompile** interesting functions: `get_function_code(function_identifier="FUN_xxx")`
 3. **Analyze** the decompiled code, identifying patterns and purpose
-4. **Cross-reference** — use `list_references`, `get_function_callers`, `analyze_call_graph` to trace connections
+4. **Cross-reference** — use `list_references`, `get_call_graph` to trace connections
 5. **Read memory** — use `read_memory` to inspect raw bytes at interesting addresses
 6. **Rename** functions and variables to meaningful names as you understand them
 7. **Create types** — build structures for register maps, create enums for flag constants
@@ -321,7 +324,7 @@ When a variable takes on a small, fixed set of values — especially in `switch`
 mcp__ghidra__create_enum(name="task_state_t", size=1, category_path="/App", values={"TASK_IDLE": 0, "TASK_RUNNING": 1, "TASK_BLOCKED": 2, "TASK_SUSPENDED": 3})
 
 # 3. Apply it to the variable
-mcp__ghidra__set_variable_types(function_address="08001234", types={"local_8": "task_state_t"})
+mcp__ghidra__set_variable_types(function_identifier="08001234", types={"local_8": "task_state_t"})
 ```
 
 **Naming conventions for enum values:**
@@ -378,7 +381,7 @@ mcp__ghidra__set_address_data_type(address="20001000", data_type="cal_row_t[4]")
 
 **For local variables:** use `set_variable_types` with array syntax:
 ```
-mcp__ghidra__set_variable_types(function_address="08001234", types={"local_28": "byte[16]"})
+mcp__ghidra__set_variable_types(function_identifier="08001234", types={"local_28": "byte[16]"})
 ```
 
 ### Structs — Model the Real Data Layout
@@ -412,7 +415,7 @@ mcp__ghidra__add_structure_field(struct_name="uart_config_t", field_name="rx_hea
 mcp__ghidra__add_structure_field(struct_name="uart_config_t", field_name="rx_tail", field_type="uint16_t", offset=138)
 
 # Apply to a local variable (the pointer parameter)
-mcp__ghidra__set_variable_types(function_address="08001234", types={"param_1": "uart_config_t *"})
+mcp__ghidra__set_variable_types(function_identifier="08001234", types={"param_1": "uart_config_t *"})
 
 # Apply to a global instance
 mcp__ghidra__set_address_data_type(address="20000800", data_type="uart_config_t")
@@ -467,14 +470,14 @@ These are hard-won lessons from actual usage. Read before doing bulk annotation 
 **Workflow for renaming data at an address:**
 ```
 # Step 1: Check if data is defined
-mcp__ghidra__get_memory_data_type(address="60000109")
+mcp__ghidra__get_address_data_type(address="60000109")
 # If "Type: Undefined Data" → must define it first
 
 # Step 2: Define the data type (may report error but usually succeeds)
 mcp__ghidra__set_address_data_type(address="60000109", data_type="byte")
 
 # Step 3: Verify it's now defined
-mcp__ghidra__get_memory_data_type(address="60000109")
+mcp__ghidra__get_address_data_type(address="60000109")
 # Should show "Type: Defined Data"
 
 # Step 4: Now rename
