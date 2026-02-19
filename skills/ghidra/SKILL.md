@@ -110,68 +110,15 @@ Look for and annotate:
 
 ## When to Use `analyze_data_flow`
 
-`analyze_data_flow` returns every DEFINE (write) and USE (read) of a variable within a function, including the PCode operation and instruction address. This is more precise than reading decompiled code because it shows the actual SSA data flow through phi-nodes, register assignments, and conditional paths.
+Use `analyze_data_flow` when naming or splitting variables. It returns every DEFINE (write) and USE (read) of a variable within a function, revealing the actual SSA data flow — which is more precise than reading decompiled code.
 
-### When it's the right tool
+- **Naming variables** — the sequence of DEFINEs and USEs shows what a variable actually represents through its lifecycle
+- **Detecting register reuse** — multiple DEFINEs at semantically unrelated addresses means the decompiler merged unrelated values into one variable. These are candidates for `split_variable`.
+- **Pre-work for `split_variable`** — use it to identify the exact `usage_address` that `split_variable` requires
 
-- **Detecting variable reuse by the decompiler** — on register-constrained architectures, the decompiler often assigns a single variable name to values that occupy the same register at different times but are semantically unrelated. `analyze_data_flow` reveals multiple DEFINE operations at unrelated addresses — candidates for `split_variable`.
-- **Tracing a value through a computation pipeline** — data flow analysis shows the exact sequence of DEFINEs and USEs, making the pipeline structure explicit.
-- **Understanding conditional/clamping paths** — MULTIEQUAL operations indicate phi-nodes where different code paths merge.
-- **Pre-work before `split_variable`** — use `analyze_data_flow` to identify the exact `usage_address` required by `split_variable`.
+## Cross-Function Data Flow Tracing
 
-### When to use something else
-
-- **Understanding what a function does** — start with `get_function_code`. Only reach for `analyze_data_flow` when you need to trace a specific variable's flow.
-- **Tracing cross-function data flow** — `analyze_data_flow` is single-function scope. Use `get_call_graph` + `list_references` for inter-function tracing.
-- **Understanding branching structure** — use `analyze_control_flow` for the basic block graph.
-
-### Reading the output
-
-Each reference has:
-- **address**: instruction address (bare hex)
-- **kind**: `DEFINE` (write) or `USE` (read)
-- **operation**: PCode op — `CALL` (return value), `INT_ADD`/`INT_SUB` (arithmetic), `COPY` (assignment), `MULTIEQUAL` (phi-node/merge), `SUBPIECE` (truncation), `INT_SEXT` (sign-extend)
-- **instruction**: assembly instruction at that address
-
-A variable with multiple DEFINEs at semantically unrelated addresses is strong evidence of register reuse.
-
-## Tracing Data Flow Through the Call Stack
-
-`analyze_data_flow` is single-function scope. Cross-function tracing requires combining tools manually. The core technique is: **decompile both sides of a function call and match arguments to parameters by position.**
-
-### Forward Tracing — Following Data Downstream
-
-Use when you've identified an interesting value and want to know where it ends up.
-
-1. Decompile the originating function. Identify the variable.
-2. Find where it's passed as an argument — note position and callee.
-3. Decompile the callee — Nth argument maps to Nth parameter.
-4. Trace within the callee. Use `analyze_data_flow` if precision is needed.
-5. Repeat or stop when the value reaches a sink (hardware write, global store, discard).
-
-### Backward Tracing — Finding Where Data Comes From
-
-Use when you need to understand what a function's inputs actually contain.
-
-1. Start in the function — identify the parameter of interest.
-2. `get_call_graph(direction="callers", depth=1)` to find call sites.
-3. Decompile each caller — identify what expression is passed at the parameter position.
-4. Recurse if the argument is itself a parameter; switch to forward tracing if it's a return value.
-
-### Global/Shared-State Tracing
-
-Data often flows through globals rather than parameters.
-
-1. Note the global address from decompiled code.
-2. `list_references(address="20001000")` to find all readers and writers.
-3. Decompile referencing functions to classify as readers vs. writers.
-4. Trace writers backward (where does the value come from?) and readers forward (what do they do with it?).
-
-### Multi-Hop Tips
-
-- **Limit depth** — 3-4 hops usually suffices. Deeper means you're likely in generic utility code.
-- **Name as you go** — renaming at each hop makes subsequent decompilations immediately clearer.
-- **Watch for shared-state handoffs** — a parameter trace may dead-end at a global write; switch to global tracing.
+`analyze_data_flow` is single-function scope. To trace across calls, decompile both sides and match arguments to parameters by position. Use `get_call_graph` to find callers/callees, `list_references` to find all readers/writers of a global. Name as you go — renaming at each hop makes subsequent decompilations clearer. Limit depth to 3-4 hops; deeper usually means generic utility code.
 
 ## Applying Data Types for Semantic Clarity
 
