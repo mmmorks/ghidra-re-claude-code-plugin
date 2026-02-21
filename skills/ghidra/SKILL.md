@@ -41,7 +41,7 @@ When starting a new analysis or when asked for an overview:
 1. `get_program_info` — architecture, endianness, format, entry point
 2. `get_memory_layout` — binary layout (flash, RAM, peripheral regions)
 3. `list_functions(limit=20)` — sample function names and gauge analysis state
-4. `list_symbols(limit=50)` — entry points, imports, exports, labels
+4. `list_labels(limit=50)` — named data locations, global variables, code labels
 5. `list_data_items(limit=50)` — version strings, config constants, magic values
 6. `list_data_types(kind="struct")` and `list_data_types(kind="enum")` — existing type definitions
 
@@ -124,6 +124,9 @@ Use `get_function_code(function_identifier="...", mode="assembly")` when the dec
 - **Register-level data flow** — when you need to see exactly which registers carry values across instructions, e.g. tracing a peripheral read through a sequence of shifts and masks that the decompiler merged into one expression
 - **Calling convention verification** — confirming which registers hold arguments/return values at a call site, especially for non-standard or variadic calls the decompiler may get wrong
 - **Inline assembly or intrinsics** — sections the decompiler renders as opaque `CALLOTHER` or `__asm` blocks are only readable in assembly
+- **Pointer split detection** — when decompiled output shows `._0_2_` or `._2_2_` partial access on a global, check assembly for half-word vs full-word loads/stores to determine if it's one 32-bit value or two independent 16-bit values
+- **Return value verification** — confirm whether a function writes to the return register (r10 on V850, r0 on ARM, eax on x86) before the return instruction to determine `void` vs value return
+- **Dead code identification** — unreachable blocks from always-true unsigned comparisons (e.g. `ushort >= 0`) are compiler artifacts, not logic errors
 
 Assembly mode is a complement to decompiled C, not a replacement. Use it to resolve specific ambiguities, then return to C for continued analysis.
 
@@ -139,16 +142,25 @@ The decompiler produces generic types (`undefined`, `int`, `long`) for everythin
 
 | Generic | Better | When to use |
 |---------|--------|-------------|
-| `int` / `undefined4` | `uint32_t` | Unsigned: addresses, sizes, bitfield registers |
-| `int` / `undefined4` | `int32_t` | Signed: error codes, deltas, negative offsets |
-| `undefined1` | `uint8_t` / `byte` | Raw data bytes, register values |
+| `undefined4` | `uint` | Unsigned: addresses, sizes, bitfield registers |
+| `undefined4` | `int` | Signed: error codes, deltas, negative offsets |
+| `undefined1` | `byte` / `uchar` | Raw data bytes, register values |
 | `undefined1` | `char` | ASCII characters, string buffers |
 | `undefined1` | `bool` | Variables only ever 0 or 1, used in conditionals |
-| `undefined2` | `uint16_t` / `int16_t` | 16-bit registers, ADC readings |
+| `undefined2` | `ushort` | Unsigned 16-bit: ADC readings, breakpoints, unsigned counters |
+| `undefined2` | `short` | Signed 16-bit: torque values, filter states, signed deltas |
 | `int` | `size_t` | Byte counts, buffer lengths, loop bounds |
 | `void *` | `specific_struct_t *` | When pointed-to type is known |
+| `undefined` (return) | `void` | Function doesn't write to return register before returning |
+| `pointer` | `int` | 32-bit accumulator/state variable showing `&DAT_*` artifacts |
 
 **Key principles:** signedness matters (compared with `<` → signed; masked/shifted → unsigned), width matters (match the register/field width), use `bool` for flags, use `char` for text.
+
+**Symptoms of wrong types:**
+- `undefined1` → shows char literal comparisons (`'\0'`, `'\x01'`) instead of integer 0/1
+- `undefined2` → shows `(undefined2)` casts on assignments
+- `pointer` on integer globals → shows `&DAT_*`, `(undefined *)`, pointer arithmetic on what should be integer math
+- `undefined` return type → spurious return value artifacts in callers
 
 ### Enums — Name the Magic Numbers
 
@@ -186,6 +198,19 @@ mcp__ghidra__set_variable_types(function_identifier="08001234", types={"param_1"
 ```
 
 Use `update_structure` for bulk field renames and type changes. Use `add_structure_field` to add fields incrementally as you discover them. Name fields with `snake_case` for what they represent, not their offset.
+
+### Detecting Correct Parameter Types from Usage
+
+The decompiler often assigns `uint` or `int` to parameters that are actually narrower. Look for masking patterns that reveal the true width:
+
+| Decompiler Pattern | Meaning | Fix |
+|---|---|---|
+| `param & 0xffff` used throughout | Parameter is 16-bit | Change to `ushort` or `short` |
+| `param & 0xff` used throughout | Parameter is 8-bit | Change to `uchar` in prototype |
+| `(int)param` cast on a `short` param | Sign extension for 32-bit arithmetic | Correct — no fix needed |
+| `(uint)param` cast on a `ushort` param | Zero extension for 32-bit arithmetic | Correct — no fix needed |
+
+Narrowing parameter types eliminates redundant masks in the decompiled output, making the code more readable.
 
 ## GhidraMCP Gotchas & Practical Notes
 
@@ -243,6 +268,52 @@ When doing bulk annotation work, organize by functional area:
 1. **Rename functions first** — most reliable and highest impact
 2. **Rename globals by memory region** — group by address range
 3. **Rename local variables last** — one function at a time using `rename_variables`
+
+### 7. `pointer` type on integer globals produces nonsense
+
+When a 32-bit RAM variable (accumulator, filter state, counter) is typed as `pointer`, Ghidra generates pointer arithmetic expressions — `&DAT_0003ffff`, `(undefined *)`, `puVar3`. This is the most misleading type error you'll encounter. Fix: retype to `int` with `clear_existing: true`.
+
+### 8. Pointer splits — one 4-byte label hiding two 16-bit values
+
+A `pointer` or `undefined4` at an address can actually be two independent `short` values accessed via half-word loads/stores at offset+0 and offset+2. The decompiler shows `._0_2_` and `._2_2_` partial access notation. Verify with assembly mode (look for `ld.h`/`st.h` vs `ld.w`). Fix: `set_address_data_type` on the base address with `short` and `clear_existing: true` (this clears the 4-byte definition), then define the second `short` at base+2.
+
+### 9. `clear_existing: true` required when changing defined types
+
+`set_address_data_type` fails or errors when the new type conflicts with an existing definition at the address (e.g. `pointer` → `int`, `undefined4` → `int`, or splitting a 4-byte type into two 2-byte types). Always pass `clear_existing: true` when changing the type of an already-defined address.
+
+### 10. Comment clearing requires multiple comment types
+
+Ghidra stores `plate`, `pre`, `decompiler`, `eol`, and `post` comments independently at each address. Clearing just one type may leave others visible in the decompiled output. When removing all comments from an address, clear `plate`, `pre`, AND `decompiler` types separately with empty string `""`.
+
+### 11. `byte` doesn't work in function prototypes
+
+Ghidra's prototype parser rejects `byte` as a parameter or return type. Use `uchar` for unsigned byte parameters and `char` for signed. This only affects `set_function_prototype` — `set_variable_types` and `set_address_data_type` accept `byte` normally.
+
+### 12. `undefined` return type means unanalyzed, not void
+
+Functions with `undefined` return type haven't had their prototype set — they are not necessarily `void`. Most are `void`, but verify by checking whether the return register is written before the return instruction in assembly mode. Setting the correct return type eliminates spurious return value artifacts in callers.
+
+## Common Decompiler Artifacts (Not Fixable)
+
+These are cosmetic Ghidra decompiler artifacts that cannot be fixed via annotation. Recognizing them prevents wasted effort trying to "fix" them:
+
+- **`in_rXX`** — Dead register reference from the calling function's context. Often appears multiplied by 0 in all code paths (e.g. `in_r12 * (uint)bVar1 * (uint)!bVar1` where one factor is always 0). The decompiler fails to optimize it away.
+- **`unaff_rXX`** — Callee-saved or global pointer register leaked into an expression. Commonly `gp` (global pointer) on architectures that use one. Always zeroed out by surrounding logic.
+- **`CONCAT31(extraout_var, bVar)`** — Byte-returning function where the decompiler can't prove the upper 24 bits of the return register are zero. The comparison still works correctly at runtime.
+- **Unsigned-always-true comparisons** — Conditions like `ushort >= 0` generate unreachable else blocks. These are compiler dead code, cosmetic only — not logic errors.
+
+## Systematic Audit Checklist
+
+When auditing a function (and optionally its callees to N levels deep) for RE quality:
+
+1. **Prototype** — Return type (`undefined` → `void` if no return value), parameter types (width from masking patterns, signedness from comparisons), parameter names (from usage context)
+2. **Global types** — `undefined1/2/4` → proper sized types; `pointer` on integer values → `int`
+3. **Global names** — `DAT_*` / `PTR_DAT_*` prefixes → descriptive names based on how the variable is used
+4. **Local variable names** — Generic `param_1`, `local_10` → meaningful names after understanding the function
+5. **Comments** — Remove speculative (e.g. "likely...", "appears to..."), stale (referencing old names), or verbose comments; keep concise accurate algorithmic descriptions
+6. **Logic verification** — Cross-reference with assembly for suspicious patterns (pointer splits, dead code, register artifacts)
+
+When auditing callees, use `get_call_graph` with `direction="callees"` and the desired `depth` to enumerate all functions in scope, then decompile each and check globals systematically.
 
 ## Response Style
 
