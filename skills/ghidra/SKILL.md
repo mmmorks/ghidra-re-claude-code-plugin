@@ -116,6 +116,17 @@ Use `analyze_data_flow` when naming or splitting variables. It returns every DEF
 - **Detecting register reuse** — multiple DEFINEs at semantically unrelated addresses means the decompiler merged unrelated values into one variable. These are candidates for `split_variable`.
 - **Pre-work for `split_variable`** — use it to identify the exact `usage_address` that `split_variable` requires
 
+## When to Use Assembly Mode
+
+Use `get_function_code(function_identifier="...", mode="assembly")` when the decompiled C output is unclear or misleading:
+
+- **Decompiler artifacts** — when the C output has suspicious casts, collapsed expressions, or optimized-away logic that doesn't make sense, the assembly shows what the CPU actually executes
+- **Register-level data flow** — when you need to see exactly which registers carry values across instructions, e.g. tracing a peripheral read through a sequence of shifts and masks that the decompiler merged into one expression
+- **Calling convention verification** — confirming which registers hold arguments/return values at a call site, especially for non-standard or variadic calls the decompiler may get wrong
+- **Inline assembly or intrinsics** — sections the decompiler renders as opaque `CALLOTHER` or `__asm` blocks are only readable in assembly
+
+Assembly mode is a complement to decompiled C, not a replacement. Use it to resolve specific ambiguities, then return to C for continued analysis.
+
 ## Cross-Function Data Flow Tracing
 
 `analyze_data_flow` is single-function scope. To trace across calls, decompile both sides and match arguments to parameters by position. Use `get_call_graph` to find callers/callees, `list_references` to find all readers/writers of a global. Name as you go — renaming at each hop makes subsequent decompilations clearer. Limit depth to 3-4 hops; deeper usually means generic utility code.
