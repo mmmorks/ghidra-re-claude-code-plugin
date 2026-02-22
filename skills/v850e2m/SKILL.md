@@ -11,49 +11,66 @@ You have access to the full Renesas V850E2M User's Manual (Architecture) as a JS
 
 ## How to look things up
 
-Use the `Grep` tool to search the JSONL file. Each line is a self-contained JSON object, so matching lines give you complete chunks. Always search before answering from memory — the reference is authoritative.
+Query the JSONL file using `Bash` with `grep` piped to `python3`. Each line is a self-contained JSON object. Always search before answering from memory — the reference is authoritative.
+
+**Important:** Do NOT use the `Grep` tool — JSONL lines are too long and get truncated. Use `Bash` with `grep | python3` instead.
 
 ### Look up an instruction by mnemonic
 
-Use `Grep` with the exact mnemonic in the title field:
-
-```
-Grep(pattern='"title": "MOV"', path="/Users/john/Code/ghidra-re-claude-code-plugin/v850e2m_rag_chunks.jsonl", output_mode="content")
+```bash
+grep '"title": "MOV"' /Users/john/Code/ghidra-re-claude-code-plugin/v850e2m_rag_chunks.jsonl | python3 -c "import json,sys; c=json.loads(sys.stdin.readline()); print(c['content'])"
 ```
 
 The title field uses exact mnemonic names: `ADD`, `MOV`, `LD.W`, `Bcond`, `ABSF.D`, etc.
 
 ### Search by keyword across all chunks
 
+```bash
+grep -i 'KEYWORD' /Users/john/Code/ghidra-re-claude-code-plugin/v850e2m_rag_chunks.jsonl | python3 -c "
+import json,sys
+for line in sys.stdin:
+    c=json.loads(line)
+    print('[{}] {} (pp {})'.format(c['type'], c['title'], c['pages']))
+"
 ```
-Grep(pattern="PSW", path="/Users/john/Code/ghidra-re-claude-code-plugin/v850e2m_rag_chunks.jsonl", output_mode="content", -i=true)
-```
-
-This returns every JSONL line mentioning the keyword. Parse the JSON from the output to read `title`, `type`, `hierarchy`, and `content` fields.
 
 ### Filter by chunk type
 
-```
-Grep(pattern='"type": "register"', path="/Users/john/Code/ghidra-re-claude-code-plugin/v850e2m_rag_chunks.jsonl", output_mode="content")
+```bash
+grep '"type": "register"' /Users/john/Code/ghidra-re-claude-code-plugin/v850e2m_rag_chunks.jsonl | python3 -c "
+import json,sys
+for line in sys.stdin:
+    c=json.loads(line)
+    print(c['title'])
+"
 ```
 
 Types: `instruction`, `register`, `exception`, `protection`, `section`
 
 ### Filter by instruction category
 
-```
-Grep(pattern='"category": "Branch instruction"', path="/Users/john/Code/ghidra-re-claude-code-plugin/v850e2m_rag_chunks.jsonl", output_mode="content")
-```
-
-### Handling long output
-
-If a keyword search returns too many results, use `head_limit` to cap the output:
-
-```
-Grep(pattern="KEYWORD", path="/Users/john/Code/ghidra-re-claude-code-plugin/v850e2m_rag_chunks.jsonl", output_mode="content", head_limit=5)
+```bash
+grep '"category": "Branch instruction"' /Users/john/Code/ghidra-re-claude-code-plugin/v850e2m_rag_chunks.jsonl | python3 -c "
+import json,sys
+for line in sys.stdin:
+    c=json.loads(line)
+    print(c['title'])
+"
 ```
 
-Then refine your search with a more specific pattern.
+### Read full content of a chunk
+
+```bash
+grep '"title": "SEARCH_TERM"' /Users/john/Code/ghidra-re-claude-code-plugin/v850e2m_rag_chunks.jsonl | python3 -c "
+import json,sys
+for line in sys.stdin:
+    c=json.loads(line)
+    print('--- {} ---'.format(c['title']))
+    print('Hierarchy:', ' > '.join(c['hierarchy']))
+    print()
+    print(c['content'])
+"
+```
 
 ## Chunk schema
 
