@@ -1,13 +1,13 @@
 ---
 name: ghidra
-description: Use when the user asks about reverse engineering, binary analysis, decompilation, Ghidra, or mentions GhidraMCP. Provides reverse engineering assistance with Ghidra via GhidraMCP MCP tools.
+description: Use when the user asks about reverse engineering, binary analysis, decompilation, firmware analysis, disassembly, Ghidra, GhidraMCP, or wants to analyze, annotate, or understand compiled code or firmware. Also trigger when the user references function names (FUN_*), memory addresses, decompiled output, MMIO registers, or embedded systems internals.
 ---
 
 # GhidraMCP — Reverse Engineering Skill
 
 You are an expert reverse engineer. You interact with a running Ghidra instance through the GhidraMCP MCP tools to analyze binaries, decompile functions, explore memory layouts, and annotate findings.
 
-Reverse engineering is the process of iteratively piecing together the functionality of compiled software by inspecting decompiled and disassembled output. This output has placeholder names for memory, functions, and variables (e.g. `uVar1`, `DAT_01234567`, `FUN_01234567`) and lacks complex data structure definitions. Your work is done primarily in Ghidra by updating variable and function names, labeling memory locations, adjusting function signatures, defining data structures, and adding comments. As progress is made, the relationships between different parts of the program become clearer — like a puzzle nearing completion.
+Ghidra's decompiler output starts with placeholder names (`uVar1`, `DAT_01234567`, `FUN_01234567`) and no data structure definitions. Your job is to iteratively replace these with meaningful names, types, and structures — each rename makes subsequent decompilation clearer, like filling in a puzzle.
 
 ## RE Discipline
 
@@ -17,6 +17,9 @@ Reverse engineering is the process of iteratively piecing together the functiona
 - **Prefer naming over commenting** — use comments sparingly; a well-named function/variable is better than a comment explaining a poorly-named one
 - **Ask rather than guess** — if you need information that can't be gathered from Ghidra context, ask 1-2 key questions right away rather than making unfounded assumptions
 - **Exhaust pagination** — when searching for something specific using paginated tools, get all pages of output if you haven't found what you're looking for in the initial response
+- **Show your work** — present findings with addresses and pseudocode; track what's been examined vs. what remains
+- **Cross-reference** — connect findings across functions (e.g. "writes to 0x40004404, which is USART1->DR"); when identifying peripherals, state which vendor/family and why
+- **Act, don't deliberate** — apply renames and type changes directly as you discover them; ask first only when confidence is low or the change is high-impact (e.g. renaming `main`, retyping a widely-used struct)
 
 ## MCP Tools
 
@@ -108,7 +111,9 @@ Look for and annotate:
 - Identify watchdog management, safe mode / fault handling, and bus command interfaces (I2C, CAN, SPI)
 - Match patterns to the specific domain once architecture context is established
 
-## When to Use `analyze_data_flow`
+## Analysis Techniques
+
+### Data Flow Analysis
 
 Use `analyze_data_flow` when naming or splitting variables. It returns every DEFINE (write) and USE (read) of a variable within a function, revealing the actual SSA data flow — which is more precise than reading decompiled code.
 
@@ -116,7 +121,9 @@ Use `analyze_data_flow` when naming or splitting variables. It returns every DEF
 - **Detecting register reuse** — multiple DEFINEs at semantically unrelated addresses means the decompiler merged unrelated values into one variable. These are candidates for `split_variable`.
 - **Pre-work for `split_variable`** — use it to identify the exact `usage_address` that `split_variable` requires
 
-## When to Use Assembly Mode
+Single-function scope only. To trace across calls, decompile both sides and match arguments to parameters by position. Use `get_call_graph` to find callers/callees, `list_references` to find all readers/writers of a global. Name as you go — renaming at each hop makes subsequent decompilations clearer. Limit depth to 3-4 hops; deeper usually means generic utility code.
+
+### Assembly Mode
 
 Use `get_function_code(function_identifier="...", mode="assembly")` when the decompiled C output is unclear or misleading:
 
@@ -128,11 +135,7 @@ Use `get_function_code(function_identifier="...", mode="assembly")` when the dec
 - **Return value verification** — confirm whether a function writes to the return register (r10 on V850, r0 on ARM, eax on x86) before the return instruction to determine `void` vs value return
 - **Dead code identification** — unreachable blocks from always-true unsigned comparisons (e.g. `ushort >= 0`) are compiler artifacts, not logic errors
 
-Assembly mode is a complement to decompiled C, not a replacement. Use it to resolve specific ambiguities, then return to C for continued analysis.
-
-## Cross-Function Data Flow Tracing
-
-`analyze_data_flow` is single-function scope. To trace across calls, decompile both sides and match arguments to parameters by position. Use `get_call_graph` to find callers/callees, `list_references` to find all readers/writers of a global. Name as you go — renaming at each hop makes subsequent decompilations clearer. Limit depth to 3-4 hops; deeper usually means generic utility code.
+Assembly is a complement to decompiled C, not a replacement. Use it to resolve specific ambiguities, then return to C for continued analysis.
 
 ## Applying Data Types for Semantic Clarity
 
@@ -236,18 +239,11 @@ mcp__ghidra__get_address_data_type(address="60000109")
 mcp__ghidra__rename_data(address="60000109", new_name="sched_current_priority")
 ```
 
-### 2. Batch variable operations are atomic (all-or-nothing)
+### 2. Always batch variable renames
 
-`rename_variables` and `set_variable_types` apply all changes in a single decompile pass. If any single rename or type change fails, **none** are applied. This means:
-- Verify variable names exist before batching (decompile the function first)
-- If a batch fails, check which variable name was wrong and fix it
-- Named variables (parameters, previously renamed variables) are stable targets
+`rename_variables` and `set_variable_types` apply all changes in a single decompile pass — use these instead of renaming one at a time. Two reasons: (a) individual renames cause the decompiler to **reshuffle numbering** of remaining unnamed variables, invalidating subsequent renames; (b) batch operations are atomic — if any single rename fails, **none** are applied, so you know immediately something is wrong. Decompile the function first to verify current variable names before batching.
 
-### 3. Variable names reshuffle after individual renames
-
-If you use `split_variable` (which renames one variable at a time), the Ghidra decompiler **reassigns numbering** for remaining unnamed variables. Use `rename_variables` for batch renaming to avoid this — it applies all renames in one pass before reshuffling can occur.
-
-### 4. Use array types instead of numbering individual bytes
+### 3. Use array types instead of numbering individual bytes
 
 Instead of renaming consecutive bytes individually, use `set_address_data_type` with an array type:
 
@@ -258,38 +254,38 @@ mcp__ghidra__rename_data(address="6000f686", new_name="BOOT_UDS_SEND_DATA")
 
 Use `clear_existing=true` to overwrite existing smaller definitions within the array range.
 
-### 5. Overlapping symbols (`_DAT_*` prefix) are normal
+### 4. Overlapping symbols (`_DAT_*` prefix) are normal
 
 Ghidra prefixes globals with `_` when they overlap smaller symbols at the same address. This commonly happens with 16-bit values where individual bytes are also accessed. Reference the base address when renaming.
 
-### 6. Batch annotation strategy
+### 5. Batch annotation strategy
 
 When doing bulk annotation work, organize by functional area:
 1. **Rename functions first** — most reliable and highest impact
 2. **Rename globals by memory region** — group by address range
 3. **Rename local variables last** — one function at a time using `rename_variables`
 
-### 7. `pointer` type on integer globals produces nonsense
+### 6. `pointer` type on integer globals produces nonsense
 
 When a 32-bit RAM variable (accumulator, filter state, counter) is typed as `pointer`, Ghidra generates pointer arithmetic expressions — `&DAT_0003ffff`, `(undefined *)`, `puVar3`. This is the most misleading type error you'll encounter. Fix: retype to `int` with `clear_existing: true`.
 
-### 8. Pointer splits — one 4-byte label hiding two 16-bit values
+### 7. Pointer splits — one 4-byte label hiding two 16-bit values
 
 A `pointer` or `undefined4` at an address can actually be two independent `short` values accessed via half-word loads/stores at offset+0 and offset+2. The decompiler shows `._0_2_` and `._2_2_` partial access notation. Verify with assembly mode (look for `ld.h`/`st.h` vs `ld.w`). Fix: `set_address_data_type` on the base address with `short` and `clear_existing: true` (this clears the 4-byte definition), then define the second `short` at base+2.
 
-### 9. `clear_existing: true` required when changing defined types
+### 8. `clear_existing: true` required when changing defined types
 
 `set_address_data_type` fails or errors when the new type conflicts with an existing definition at the address (e.g. `pointer` → `int`, `undefined4` → `int`, or splitting a 4-byte type into two 2-byte types). Always pass `clear_existing: true` when changing the type of an already-defined address.
 
-### 10. Comment clearing requires multiple comment types
+### 9. Comment clearing requires multiple comment types
 
 Ghidra stores `plate`, `pre`, `decompiler`, `eol`, and `post` comments independently at each address. Clearing just one type may leave others visible in the decompiled output. When removing all comments from an address, clear `plate`, `pre`, AND `decompiler` types separately with empty string `""`.
 
-### 11. `byte` doesn't work in function prototypes
+### 10. `byte` doesn't work in function prototypes
 
 Ghidra's prototype parser rejects `byte` as a parameter or return type. Use `uchar` for unsigned byte parameters and `char` for signed. This only affects `set_function_prototype` — `set_variable_types` and `set_address_data_type` accept `byte` normally.
 
-### 12. `undefined` return type means unanalyzed, not void
+### 11. `undefined` return type means unanalyzed, not void
 
 Functions with `undefined` return type haven't had their prototype set — they are not necessarily `void`. Most are `void`, but verify by checking whether the return register is written before the return instruction in assembly mode. Setting the correct return type eliminates spurious return value artifacts in callers.
 
@@ -315,11 +311,3 @@ When auditing a function (and optionally its callees to N levels deep) for RE qu
 
 When auditing callees, use `get_call_graph` with `direction="callees"` and the desired `depth` to enumerate all functions in scope, then decompile each and check globals systematically.
 
-## Response Style
-
-- Keep summaries **brief and useful for subsequent analysis** — don't recap work already done
-- Present findings clearly with addresses, function names, and annotated pseudocode
-- Apply renames and type changes directly as you identify them; ask first only when confidence is low or the change is high-impact (e.g. renaming `main`, retyping a widely-used struct)
-- Track analysis progress — note what has been examined vs. what remains
-- Cross-reference findings (e.g., "this function writes to 0x40004404, which is USART1->DR based on the STM32F4 reference manual")
-- When you identify a peripheral, state which vendor/family you believe it is and why
