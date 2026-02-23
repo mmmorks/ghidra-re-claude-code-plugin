@@ -123,6 +123,40 @@ Use `analyze_data_flow` when naming or splitting variables. It returns every DEF
 
 Single-function scope only. To trace across calls, decompile both sides and match arguments to parameters by position. Use `get_call_graph` to find callers/callees, `list_references` to find all readers/writers of a global. Name as you go — renaming at each hop makes subsequent decompilations clearer. Limit depth to 3-4 hops; deeper usually means generic utility code.
 
+### Variable Splitting
+
+When the decompiler reuses one variable name for logically unrelated values (because the compiler reused a register), use `split_variable` to give each usage a distinct identity. This is common in large functions where the compiler aggressively reuses registers like `a2`, `a15`, `d15`.
+
+**When to split:** `analyze_data_flow` shows multiple DEFINEs at semantically unrelated addresses for the same variable — e.g. `iVar5` is defined as a loop counter at 0x1000, a memory test pattern at 0x2000, and a PLL timeout at 0x3000. These are three logically distinct variables sharing one name.
+
+**When NOT to split:** The variable represents a genuine single value across a complex control flow — e.g. a state machine counter that transitions through values (1 → 0x4b0 → 2) via gotos between loops. Splitting would fragment what is actually one logical variable.
+
+**Workflow — split one at a time:**
+
+1. **Identify targets** with `analyze_data_flow(function, variable)` — look for DEFINEs at unrelated addresses
+2. **Split one variable** at a specific DEFINE address:
+   ```
+   mcp__ghidra__split_variable(function_identifier="08001000", variable_name="iVar5", usage_address="08002000", new_name="mem_test_pattern")
+   ```
+3. **Check the result** — decompile the function and inspect:
+   - Did the split land where expected?
+   - Did the decompiler create new auto-generated variables (`bVar1`, `puVar6`, etc.) as fallout?
+4. **Clean up fallout** — if new auto-generated names appeared, rename them with `rename_variables` before the next split (otherwise they may shift on the next decompile)
+5. **Repeat** for the next target
+
+**Split storage types and their behavior:**
+
+- **HASH storage** (e.g. `HASH:3faa68d080:4`) — SSA instances with unique identifiers. Splits are clean with zero auto-generated fallout. These are the ideal targets.
+- **Register storage** (e.g. `a2:4`, `d15:4`) — Physical registers shared across many SSA instances. Splits may produce auto-generated fallout because the decompiler must reassign the remaining instances.
+
+**`rename_variables` limitation with register reuse:** When a register like `a2` is reused across 15+ WDT unlock sequences, `rename_variables` only captures one SSA instance — the rest keep the old auto-generated name. To fully rename all instances, each would need its own `split_variable` call. For mechanical boilerplate (e.g. repeated WDT unlock patterns), this usually isn't worth the effort — the pattern is clear from context.
+
+**Practical tips:**
+- Always decompile between splits to verify state — the decompiler can reshuffle variable assignments after each split
+- Target the DEFINE address (where the variable is written), not a USE address
+- Name the variable for what it represents at that specific usage site, not what the register does globally
+- For large functions with dozens of splits needed, prioritize the semantically important ones (algorithm variables, control flow state) over mechanical temporaries (loop flags, register readbacks)
+
 ### Assembly Mode
 
 Use `get_function_code(function_identifier="...", mode="assembly")` when the decompiled C output is unclear or misleading:
