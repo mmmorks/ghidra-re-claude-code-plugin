@@ -30,6 +30,7 @@ GhidraMCP exposes all Ghidra operations as MCP tools with the prefix `mcp__ghidr
 - List tools support `offset` and `limit` parameters for pagination (defaults: offset=0, limit=100)
 - `address` parameters take bare hex strings — use `"6000f685"`, NOT `"0x6000f685"`
 - `get_function_code` supports `mode`: `"C"` (default), `"assembly"`/`"asm"`, or `"pcode"`
+- `create_function` creates a function at an address where auto-analysis missed one; optionally takes a `name` parameter
 
 **Failure recovery:** If a tool call fails with a connection error, the GhidraMCP bridge or Ghidra plugin may not be running — inform the user. If a rename or type operation fails, decompile the function first to verify the current variable/function names before retrying.
 
